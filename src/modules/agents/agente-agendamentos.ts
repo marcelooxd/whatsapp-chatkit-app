@@ -1,7 +1,7 @@
 import { Agent } from "@openai/agents";
 import z from "zod";
 
-const agenteClassificacaoAgendamentoSchema = z.object(
+const agenteDeAgendamentoSchema = z.object(
     { classificacao_agendamento: z.enum(
         [
             "criar_agendamento", 
@@ -10,10 +10,10 @@ const agenteClassificacaoAgendamentoSchema = z.object(
     ) 
 });
 
-export const agenteClassificacaoAgendamento = new Agent({
+export const agenteDeAgendamento = new Agent({
   name: "Agente de Classificação de Agendamento",
   instructions: `Objetivo: Classificar a intenção do usuário relacionada a agendamentos.
-    Retorne apenas uma das intenções abaixo (string pura):
+    Retorne apenas uma das intenções abaixo:
     - \"criar_agendamento\"
     - \"verificar_horarios\"
 
@@ -77,9 +77,9 @@ export const agenteClassificacaoAgendamento = new Agent({
     A resposta deve sempre ser APENAS:
     \"criar_agendamento\" ou \"verificar_horarios\"`,
   model: "gpt-4.1-mini",
-  outputType: agenteClassificacaoAgendamentoSchema,
+  outputType: agenteDeAgendamentoSchema,
   modelSettings: {
-    temperature: 1,
+    temperature: 0.1,
     topP: 1,
     maxTokens: 2048,
     store: true

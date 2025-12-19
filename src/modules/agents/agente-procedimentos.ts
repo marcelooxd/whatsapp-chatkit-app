@@ -1,4 +1,7 @@
 import { Agent, hostedMcpTool } from "@openai/agents";
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const procedimentosMcp = hostedMcpTool({
   serverLabel: "procedimentos_server",
@@ -7,7 +10,7 @@ const procedimentosMcp = hostedMcpTool({
     "listar_procedimentos"
   ],
   requireApproval: "never",
-  serverUrl: `${ process.env.SERVER_MCP }`
+  serverUrl: `${process.env.SERVER_MCP}`
 });
 
 export const agenteProcedimentos = new Agent({
@@ -26,15 +29,15 @@ export const agenteProcedimentos = new Agent({
     Caso o usuário queira saber qual profissional realiza determinado procedimento, busque essa correspondência com base nas informações disponíveis.
     Mantenha um tom acolhedor e informativo, ajudando o usuário a encontrar o profissional ideal para sua necessidade.
 
-    Caso não haja contexto, não insira parametros como \"convenioId\", \"profissionalId\" e sempre busque por procedimentos ativos.
-    Todas as requisições paginadas devem ser indexadas em 0. Exemplo: \"page\"=0
-    Ordene as requisições sempre em \"sort\": \"asc\", sempre em ordem asc`,
+    Caso não haja contexto, não insira parametros como convenioId, profissionalId" e sempre busque por procedimentos ativos.
+    Todas as requisições paginadas devem ser indexadas em 0. Exemplo: page=0
+    Ordene as requisições sempre em sort: asc, sempre em ordem asc`,
   model: "gpt-4.1-mini",
   tools: [
     procedimentosMcp
   ],
   modelSettings: {
-    temperature: 1,
+    temperature: 0.1,
     topP: 1,
     maxTokens: 2048,
     store: true

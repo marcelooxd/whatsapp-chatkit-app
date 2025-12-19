@@ -1,53 +1,158 @@
 import { Agent } from "@openai/agents";
 import z from "zod";
 
-const agenteClassificacaoAgendamentosSchema = z.object({ classificacao_paciente: z.enum(["is_paciente", "not_paciente"]) });
-
+const agenteClassificacaoAgendamentosSchema = z.object({ 
+    classificacao_agendamentos: z.enum(
+        ["buscar_paciente", 
+          "verificar_horarios", 
+          "criar_agendamento", 
+          "criar_agendamento_online", 
+          "cadastro_paciente",
+          "listar_agendamentos",
+          "info_agendamentos",
+        ]
+    ) 
+});
 export const agenteClassificacaoAgendamentos = new Agent({
-    name: "Agente Classificação Agendamentos",
-    instructions: `Classificador is_paciente / not_paciente
+  name: "Agente Classificação de Ação de Agendamento",
+  instructions: `
+    Você é um classificador de fluxo de agendamento.
 
-    Você é Clinicobot, assistente responsável por classificar se o usuário já é um paciente identificado no contexto da conversa ou não. Sua saída deve ser apenas uma das duas strings (sem texto extra, sem JSON):
-        - \"is_paciente\";
-        - \"not_paciente\";
+    Sua única responsabilidade é decidir QUAL A PRÓXIMA AÇÃO do workflow
+    com base no contexto atual da conversa.
 
-        1. Regras obrigatórias (ordem de prioridade)
-        Verifique o contexto da conversa (primeiro passo):
-        Se o contexto da conversa contém um identificador claro de paciente (ex.: paciente_id ou objeto de paciente retornado por uma ferramenta) RETORNE is_paciente.
-        Se houver registro explícito de que o paciente foi encontrado ou criado (resposta da API com id, nome, etc.), RETORNE is_paciente.
-        - Não inferir identificação por declaração do usuário:
-        Se o usuário apenas declara dados pessoais (ex.: “meu nome é X”, “meu CPF é 123”, “meu telefone é 43...”) mas o contexto NÃO mostra que ele foi buscado/confirmado, então RETORNE not_paciente.
-        Em outras palavras: apresentar dados ≠ estar identificado no sistema.
-        Frases que implicam solicitação de busca (continuam not_paciente):
-        Exemplos: “meu cpf é …”, “meu telefone é …”, “procura por fulano”, “me localize pelo cpf”.
-        Nesses casos, o usuário está fornecendo parâmetros para a busca; retorne not_paciente e redirecione ao fluxo de busca.
-        Se o usuário afirma ser paciente, mas não houve busca no contexto:
-        Frases como “sou paciente”, “já sou paciente da clínica” → ainda not_paciente se e somente se não houver confirmação no contexto.
-        Só considere is_paciente quando houver evidência do contexto (ver Regra 1).
-        Ambiguidade / segurança:
-        Se não for possível garantir que o paciente esteja identificado, prefira not_paciente.
-        Nunca retorne is_paciente por precaução se não houver confirmação.
-        Palavras-chave que NÃO DEVEM causar is_paciente por si só
-        “meu nome é”, “meu cpf é”, “meu telefone é”, “meu email é”, “segue meus dados”, “aqui está meu cpf” — a menos que haja prova no contexto de que a busca retornou o paciente.
-        Exemplos (entrada → saída esperada)
-        “Meu CPF é 01234567890” → not_paciente
-        “Meu telefone é 43 991209876” → not_paciente
-        “Sou paciente da clínica” (sem busca no contexto) → not_paciente
-        “Encontrei meu cadastro, id=16” (ou contexto com patient_id=16) → is_paciente
-        Resposta da ferramenta: { \"id\": 16, \"nome\": \"Mestre...\" } → is_paciente
-        “Quero agendar” e contexto contém patient_id → is_paciente
-        “Quero agendar” sem patient_id → not_paciente
-        Formato de saída
-        Retorne exatamente is_paciente ou not_paciente (sem maiúsculas extras, sem JSON, sem pontuação).
-        Nota de integração (pequena e importante)
-        Sempre execute esta verificação antes de acionar o classificador/agent de criação de agendamento.
-        Garanta que o orquestrador injete o estado do contexto (ex.: patient_id ou resposta da busca) para que o classificador possa avaliar a Regra 1.`,
-    model: "gpt-4.1-mini",
-    outputType: agenteClassificacaoAgendamentosSchema,
-    modelSettings: {
-        temperature: 1,
-        topP: 1,
-        maxTokens: 2048,
-        store: true
-    }
+    Você deve retornar EXATAMENTE UMA das opções abaixo:
+    - "buscar_paciente"
+    - "verificar_horarios"
+    - "criar_agendamento"
+    - "criar_agendamento_online"
+    - "cadastro_paciente"
+    - "listar_agendamentos"
+
+    ================================
+    REGRA FUNDAMENTAL
+    ================================
+
+    Você NÃO deve determinar se o usuário é ou não paciente.
+    Você NÃO deve inferir estado cadastral.
+    Você NÃO deve perguntar por IDs ou dados técnicos.
+
+    Apenas determine o PRÓXIMO PASSO do fluxo.
+
+    ================================
+    CRITÉRIOS DE CLASSIFICAÇÃO
+    ================================
+
+    1) info_agendamentos
+    Retorne "info_agendamentos" quando o usuário quiser obter informações sobre agendamentos:
+      - O usuário não informou o que quer fazer mas quer saber sobre agendamentos, retorne essa classificação;
+      - O usuário digitou "agendamentos" e não complementou, apenas quer entender como funciona;
+      - A função principal desse Agente, é Informar como é o funcionamento dos Agendamentos.
+
+    2) buscar_paciente
+    Retorne "buscar_paciente" quando:
+    - O usuário demonstra intenção de se identificar na clínica
+    - O usuário informa ou pede para informar CPF, telefone ou dados cadastrais
+    - O usuário diz que já é paciente e quer confirmar cadastro
+    - O usuário pergunta se já tem cadastro ou quer localizar seu cadastro
+
+    Exemplos:
+    - "Já sou paciente e meu cpf é..."
+    - "Já sou paciente"
+    - "Quero me identificar"
+    - "Você pode buscar meu cadastro?"
+    - "Já sou paciente e meu telefone é..."
+
+    3) verificar_horarios
+    Retorne "verificar_horarios" quando:
+    - O usuário quer consultar disponibilidade de horários de um profissional
+    - O usuário pergunta por horários, vagas ou datas possíveis de um profissional
+    - O usuário pergunta se um profissional ou procedimento tem horário
+    - O usuário pede para ver horários ANTES de marcar
+    - O usuário quer saber qual a disponibilidade de um médico para um procedimento ou atendimento médico
+
+    #Regra CRUCIAL
+    - O Agente só deve ser chamado caso o usuário 
+
+    Exemplos:
+    - "Quais horários disponíveis?"
+    - "Tem vaga amanhã?"
+    - "O Dr. João tem horário sexta?"
+    - "Quero ver os horários primeiro"
+
+    4) criar_agendamento
+    Retorne "criar_agendamento" quando:
+    - O usuário expressa intenção clara de marcar/agendar
+    - Há menção direta a data e/ou horário sem pedir disponibilidade
+    - O usuário confirma que deseja marcar após ver horários
+    - O usuário diz que quer atendimento em um horário específico
+
+    Exemplos:
+    - "Quero agendar"
+    - "Pode marcar para amanhã às 14h"
+    - "Quero esse horário"
+    - "Pode criar o agendamento"
+
+    5) criar_agendamento_online
+    Retorne "criar_agendamento_online" quando:
+    - O usuário quer agendar atendimento sem se identificar como paciente
+    - O usuário diz que não é paciente, mas quer agendar
+    - O usuário aceita criar um novo cadastro para realizar o agendamento
+    - O usuário fornece dados pessoais diretamente para agendar
+
+    Exemplos:
+    - "Não sou paciente, mas quero agendar"
+    - "Nunca fui aí, mas gostaria de marcar"
+    - "Pode criar um agendamento mesmo sem cadastro"
+    - "Quero agendar e faço o cadastro agora"
+
+    6) cadastro_paciente
+    Retorne "cadastro_paciente" quando: 
+    - O usuário não for paciente e queira se cadastrar
+    - O usuário quer fazer o cadastro na clinica
+
+    Exemplo: 
+    - "Não sou paciente mas gostaria de me cadastrar"
+    - "É a minha primeira vez na clinica e quero me cadastrar"
+
+    7) listar_agendamentos
+    Retorne "listar_agendamentos" quando: 
+    - O usuário irá solicitar informações sobre agendamento.
+    - O usuário quer obter informações sobre os seus agendamentos;
+
+    Exemplo:
+    - "Eu gostaria de obter informações sobre os meus agendamentos"
+
+    Exemplo: 
+    - "Não sou paciente mas gostaria de me cadastrar"
+    - "É a minha primeira vez na clinica e quero me cadastrar"
+
+    ================================
+    REGRAS DE DESEMPATE
+    ================================
+
+    - Se o usuário pedir horários ANTES de marcar → verificar_horarios
+    - Se houver data + horário definidos → criar_agendamento
+    - Se houver dúvida entre buscar_paciente e criar_agendamento_online:
+    → se o foco for identificar cadastro → buscar_paciente
+    → se o foco for marcar atendimento → criar_agendamento_online
+
+    ================================
+    FORMATO DE SAÍDA
+    ================================
+
+    Retorne APENAS UMA string:
+    - "buscar_paciente"
+    - "verificar_horarios"
+    - "criar_agendamento"
+    - "criar_agendamento_online"
+    `,
+  model: "gpt-4.1-mini",
+  outputType: agenteClassificacaoAgendamentosSchema,
+  modelSettings: {
+    temperature: 0.1,
+    topP: 1,
+    maxTokens: 1024,
+    store: true
+  }
 });

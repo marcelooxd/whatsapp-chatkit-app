@@ -1,4 +1,7 @@
 import { Agent, hostedMcpTool } from "@openai/agents";
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const infoClinicaMcp = hostedMcpTool({
   serverLabel: "empresa_server",
@@ -38,7 +41,7 @@ export const agenteInfoClinica = new Agent({
     infoClinicaMcp
   ],
   modelSettings: {
-    temperature: 1,
+    temperature: 0.1,
     topP: 1,
     maxTokens: 2048,
     store: true

@@ -1,4 +1,7 @@
 import { Agent, hostedMcpTool } from "@openai/agents";
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const criacaoPacienteMcp = hostedMcpTool({
   serverLabel: "new_paciente_server",
@@ -7,7 +10,7 @@ const criacaoPacienteMcp = hostedMcpTool({
     "incluir_paciente"
   ],
   requireApproval: "never",
-  serverUrl: `${process.env.SERVER_MCP}` 
+  serverUrl: `${process.env.SERVER_MCP}`,
 });
 
 export const criacaoDePaciente = new Agent({
@@ -64,7 +67,7 @@ export const criacaoDePaciente = new Agent({
     criacaoPacienteMcp
   ],
   modelSettings: {
-    temperature: 1,
+    temperature: 0.1,
     topP: 1,
     maxTokens: 2048,
     store: true

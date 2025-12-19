@@ -12,40 +12,84 @@ import { agenteForaContexto, agenteSeguranca } from "../agents/agente-seguranca"
 import { agenteEncerramento, naoIdentificado } from "../agents/agente-encerramento";
 import { criacaoDePaciente } from "../agents/agente-new-paciente";
 import { agenteConvenios } from "../agents/agente-convenios";
-import { agenteClassificacaoAgendamento } from "../agents/agente-agendamentos";
+import { agenteDeAgendamento } from "../agents/agente-agendamentos";
 import { agenteClassificaoInicialDeInfoDaClinica } from "../agents/agente-classificacao-info-inicial";
 import { agenteBuscarPaciente } from "../agents/agente-busca-paciente";
 import { agentePacienteNaoEncontrado } from "../agents/agente-paciente-naoencontrado";
 import { agenteVerificaHorarios } from "../agents/agente-verifica-horarios";
 import { agenteDeCriacaoDeAgendamentos } from "../agents/agente-criacao-agendamento";
-import { sendMessageToOpenAI, limitConversationHistory, ConversationMessage } from "../../openai/openai-simple";
+import { sendMessageToOpenAI, ConversationMessage } from "../../openai/openai-execute";
+import { criarAgendamentoOnline } from '../agents/agente-agendamento-online';
+import { agenteListarAgendamentosPaciente } from '../agents/agente-lista-agendamentos';
+import { agenteInfoAgendamentos } from '../agents/agente-info-agendamentos';
 
 dotenv.config();
 
 const conversationHistory = new Map<string, ConversationMessage[]>();
 
+export type WorkflowInput = { 
+  input_as_text: string,
+  phone: string;
+  history: ConversationMessage[];
+  state: WorkflowState;
+};
+
+export type CriarAgendamentoState = {
+  paciente: PacienteState | null;
+  agendamento: AgendamentoState;
+};
+
+type AgendamentoState = {
+  pacienteId: number | null;
+  profissionalId: number | null;
+  procedimentoId: number | null;
+  convenioId: number | null;
+  dataAgendamentoDas: string | null;
+  dataAgendamentoAs: string | null;
+  statusAgendamento: number;
+  motivoConsulta?: string | null;
+  online?: boolean | null;
+};
+
+type PacienteState = {
+  id: number | null;
+  nome: string | null;
+  cpf: string | null;
+  telefonePrincipal: string | null;
+  ativo: boolean | null;
+};
+
+export type WorkflowState = {
+  paciente: PacienteState | null;
+};
+
+const workflowState = new Map<string, WorkflowState>();
+
 export async function processarMensagem(phone: string, text: string): Promise<string> {
   try {
     console.log(`📩 Mensagem recebida de ${phone}: ${text}`);
-    
-    let history = conversationHistory.get(phone) || [];
-    history = limitConversationHistory(history, 20);
+    let history = conversationHistory.get(phone);
+    if (!history) {
+      history = [];
+      conversationHistory.set(phone, history);
+    }
     history.push({ role: "user", content: text });
     
-    const response = await sendMessageToOpenAI(text);
+    let state = workflowState.get(phone);
+    if (!state) {
+      state = { paciente: null };
+      workflowState.set(phone, state);
+    }
+
+    const response = await sendMessageToOpenAI(phone, text, history, state);
+    
     if (!response.success) {
         console.error("❌ Erro OpenAI:", response.error);
         return "Desculpe, ocorreu um erro ao processar sua mensagem.";
     }
+    history.push({ role: "assistant", content: response.text });
 
-    const respostaGerada = response.text;
-
-    history.push({ role: "assistant", content: respostaGerada });
-    conversationHistory.set(phone, history);
-
-    console.log(`🤖 Resposta gerada: ${respostaGerada}`);
-
-    return respostaGerada;
+    return response.text;
 
   } catch (err) {
       console.error("❌ Erro no processamento:", err);
@@ -53,17 +97,31 @@ export async function processarMensagem(phone: string, text: string): Promise<st
   }
 }
 
-export type WorkflowInput = { input_as_text: string };
+function toAgentInputItems(
+  history: ConversationMessage[]
+): AgentInputItem[] {
+  console.log("history", history)
+  return history
+    .filter(msg => msg.role !== "assistant")
+    .map(msg => {
+      if (msg.role === "system") {
+        return { role: "system", content: msg.content };
+      }
+      return { 
+        role: "user", content: [{ type: "input_text", text: msg.content }]
+      };
+    });
+}
 
 export const runWorkflow = async (workflow: WorkflowInput) => {
   return await withTrace("Atendimento de Paciente", async () => {
     
     let finalOutput: { output_text: string } = { output_text: "" };
-    
+
+    // const conversationHistory: AgentInputItem[] = toAgentInputItems(workflow.history);
     const conversationHistory: AgentInputItem[] = [
       { role: "user", content: [{ type: "input_text", text: workflow.input_as_text }] }
     ];
-    
     const runner = new Runner({
       traceMetadata: {
         __trace_source__: "agent-builder",
@@ -81,11 +139,9 @@ export const runWorkflow = async (workflow: WorkflowInput) => {
     );
 
     if (guardrailsHasTripwire) {
-      const resultTemp = await runner.run(naoIdentificado, [...conversationHistory]);
-      conversationHistory.push(...resultTemp.newItems.map((i) => i.rawItem));
-
-      finalOutput = { output_text: resultTemp.finalOutput ?? "" };
-
+      const invalidInput = await runner.run(naoIdentificado, [...conversationHistory]);
+      conversationHistory.push(...invalidInput.newItems.map((i) => i.rawItem));
+      finalOutput = { output_text: "" + invalidInput.finalOutput };
     } else {
       const segResultTemp = await runner.run(agenteSeguranca, [...conversationHistory]);
       conversationHistory.push(...segResultTemp.newItems.map((i) => i.rawItem));
@@ -93,117 +149,111 @@ export const runWorkflow = async (workflow: WorkflowInput) => {
       if (!segResultTemp.finalOutput) throw new Error("Agent result is undefined");
 
       const parsedSeg = segResultTemp.finalOutput;
+      console.log(parsedSeg);
 
       // CONTEXTO
       if (parsedSeg.contexto === "contexto") {
-
         const identTemp = await runner.run(agenteDeIdentificacao, [...conversationHistory]);
         conversationHistory.push(...identTemp.newItems.map((i) => i.rawItem));
 
-        const parsedIdent = identTemp.finalOutput;
+        const parsedIdentificacao = identTemp.finalOutput;
+        console.log(parsedIdentificacao);
 
-        // ATENDIMENTO INICIAL -> identifica a intenção do usuário
-        if (parsedIdent?.classificacao === "atendimento_inicial") {
+        if (parsedIdentificacao?.classificacao === "info_agendamento") {
+
+          const classificacaoAgendamento = await runner.run(agenteClassificacaoAgendamentos, [...conversationHistory]);
+            conversationHistory.push(...classificacaoAgendamento.newItems.map((i) => i.rawItem));
+          
+          const parsedAgendamento = classificacaoAgendamento.finalOutput;
+          console.log("parsedAgendamento:", parsedAgendamento);
+          if (parsedAgendamento?.classificacao_agendamentos === "info_agendamentos") {
+            const infoAgendamentos = await runner.run(agenteInfoAgendamentos, [...conversationHistory]);
+            conversationHistory.push(...infoAgendamentos.newItems.map((i) => i.rawItem));
+            finalOutput = { output_text: infoAgendamentos.finalOutput ?? ""  };
+
+          } else if (parsedAgendamento?.classificacao_agendamentos === "buscar_paciente") {
+            const buscarPacienteTemp = await runner.run(agenteBuscarPaciente, [...conversationHistory]);
+            conversationHistory.push(...buscarPacienteTemp.newItems.map((i) => i.rawItem));
+            finalOutput = { output_text: buscarPacienteTemp.finalOutput ?? ""  };
+
+          } else if (parsedAgendamento?.classificacao_agendamentos === "verificar_horarios") {
+            const verificarHorariosTemp = await runner.run(agenteVerificaHorarios, [...conversationHistory]);
+            conversationHistory.push(...verificarHorariosTemp.newItems.map((i) => i.rawItem));
+            finalOutput = { output_text: verificarHorariosTemp.finalOutput  ?? "" };
+          
+          } else if (parsedAgendamento?.classificacao_agendamentos === "criar_agendamento") {
+            const criarAgendamentoTemp = await runner.run(agenteDeCriacaoDeAgendamentos, [...conversationHistory ]);
+            conversationHistory.push(...criarAgendamentoTemp.newItems.map((i) => i.rawItem));
+            finalOutput = { output_text: criarAgendamentoTemp.finalOutput ?? ""  };
+
+          } else if (parsedAgendamento?.classificacao_agendamentos === "criar_agendamento_online") { 
+            const criarAgendamentoOnlineTemp = await runner.run(criarAgendamentoOnline, [...conversationHistory]);
+            conversationHistory.push(...criarAgendamentoOnlineTemp.newItems.map((i) => i.rawItem ));
+            finalOutput = { output_text: criarAgendamentoOnlineTemp.finalOutput ?? ""};
+          
+          } else if (parsedAgendamento?.classificacao_agendamentos === "listar_agendamentos") { 
+            const listarAgendamentosTemp = await runner.run(agenteListarAgendamentosPaciente, [...conversationHistory]);
+            conversationHistory.push(...listarAgendamentosTemp.newItems.map((i) => i.rawItem ));
+            finalOutput = { output_text: listarAgendamentosTemp.finalOutput ?? ""};
+          
+          } else if (parsedAgendamento?.classificacao_agendamentos === "cadastro_paciente") { 
+            const criacaoDePacienteTemp = await runner.run(criacaoDePaciente, [...conversationHistory]);
+            conversationHistory.push(...criacaoDePacienteTemp.newItems.map((i) => i.rawItem ));
+            finalOutput = { output_text: criacaoDePacienteTemp.finalOutput ?? ""};
+          }
+
+        } else if (parsedIdentificacao?.classificacao === "classificacao_info_clinica") {
+
+            const tempClinica = await runner.run(agenteClassificaoInicialDeInfoDaClinica, [...conversationHistory]);
+            conversationHistory.push(...tempClinica.newItems.map((i) => i.rawItem));
+
+            const parsedClinica = tempClinica.finalOutput;
+
+            if (parsedClinica?.info_classificacao === "info_convenio") {
+              const convenios = await runner.run(agenteConvenios, [...conversationHistory]);
+              conversationHistory.push(...convenios.newItems.map((i) => i.rawItem));
+              finalOutput = { output_text: convenios.finalOutput  ?? "" };
+
+            } else if (parsedClinica?.info_classificacao === "info_profissional") {
+              const profissionais = await runner.run(agenteProfissionais, [...conversationHistory]);
+              conversationHistory.push(...profissionais.newItems.map((i) => i.rawItem));
+
+              finalOutput = { output_text: profissionais.finalOutput ?? "" };
+
+            } else if (parsedClinica?.info_classificacao === "info_procedimento") {
+              const procedimentos = await runner.run(agenteProcedimentos, [...conversationHistory]);
+              conversationHistory.push(...procedimentos.newItems.map((i) => i.rawItem));
+
+              finalOutput = { output_text: procedimentos.finalOutput ?? "" };
+            } else {
+              const clinica = await runner.run(agenteInfoClinica, [...conversationHistory]);
+              conversationHistory.push(...clinica.newItems.map((i) => i.rawItem));
+              finalOutput = { output_text: clinica.finalOutput ?? "" };
+            
+            }
+
+        } else if (parsedIdentificacao?.classificacao === "atendimento_inicial") {
+         
           const temp = await runner.run(agenteAtendimentoInicial, [...conversationHistory]);
           conversationHistory.push(...temp.newItems.map((i) => i.rawItem));
-
           finalOutput = { output_text: temp.finalOutput ?? "" };
-        } else if (parsedIdent?.classificacao === "classificacao_info_clinica") {
-          // CLASSIFICAÇÃO CLÍNICA -> 1 passo
-
-          const tempClinica = await runner.run(agenteClassificaoInicialDeInfoDaClinica, [...conversationHistory]);
-          conversationHistory.push(...tempClinica.newItems.map((i) => i.rawItem));
-
-          const parsedClinica = tempClinica.finalOutput;
-
-          if (parsedClinica?.info_classificacao === "info_convenio") {
-            const temp = await runner.run(agenteConvenios, [...conversationHistory]);
-            conversationHistory.push(...temp.newItems.map((i) => i.rawItem));
-            
-            finalOutput = { output_text: temp.finalOutput ?? "" };
-          } else if (parsedClinica?.info_classificacao === "info_profissional") {
-            const temp = await runner.run(agenteProfissionais, [...conversationHistory]);
-            conversationHistory.push(...temp.newItems.map((i) => i.rawItem));
-
-            finalOutput = { output_text: temp.finalOutput ?? "" };
-
-          } else if (parsedClinica?.info_classificacao === "info_procedimento") {
-            const temp = await runner.run(agenteProcedimentos, [...conversationHistory]);
-            conversationHistory.push(...temp.newItems.map((i) => i.rawItem));
-
-            finalOutput = { output_text: temp.finalOutput ?? "" };
-          } else {
-            const temp = await runner.run(agenteInfoClinica, [...conversationHistory]);
-            conversationHistory.push(...temp.newItems.map((i) => i.rawItem));
-
-            finalOutput = { output_text: temp.finalOutput ?? "" };
-          }
-
-          // AGENDAMENTO
-        } else if (parsedIdent?.classificacao === "info_agendamento") {
-
-          const temp = await runner.run(agenteClassificacaoAgendamentos, [...conversationHistory]);
-          conversationHistory.push(...temp.newItems.map((i) => i.rawItem));
-
-          const parsedAg = temp.finalOutput;
-
-          if (parsedAg?.classificacao_paciente === "is_paciente") {
-
-            const agTemp = await runner.run(agenteClassificacaoAgendamento, [...conversationHistory]);
-            conversationHistory.push(...agTemp.newItems.map((i) => i.rawItem));
-
-            const parsedAgTemp = agTemp.finalOutput;
-
-            if (parsedAgTemp?.classificacao_agendamento === "verificar_horarios") {
-              const horariosTemp = await runner.run(agenteVerificaHorarios, [...conversationHistory]);
-              conversationHistory.push(...horariosTemp.newItems.map((i) => i.rawItem));
-              finalOutput = { output_text: horariosTemp.finalOutput ?? "" };
-            } else {
-              const criarTemp = await runner.run(agenteDeCriacaoDeAgendamentos, [...conversationHistory]);
-              conversationHistory.push(...criarTemp.newItems.map((i) => i.rawItem));
-
-              finalOutput = { output_text: criarTemp.finalOutput ?? "" };
-            }
-
-          } 
           
-          else if (parsedAg?.classificacao_paciente === "not_paciente") {
-            const temp2 = await runner.run(agentePacienteNaoEncontrado, [...conversationHistory]);
-            conversationHistory.push(...temp2.newItems.map((i) => i.rawItem));
-
-            const parsedNP = temp2.finalOutput;
-
-            if (parsedNP?.classificacao === "criar_paciente") {
-              const temp3 = await runner.run(criacaoDePaciente, [...conversationHistory]);
-              conversationHistory.push(...temp3.newItems.map((i) => i.rawItem));
-
-              finalOutput = { output_text: temp3.finalOutput ?? "" };
-            }
-
-            else if (parsedNP?.classificacao === "buscar_paciente") {
-              const temp4 = await runner.run(agenteBuscarPaciente, [...conversationHistory]);
-              conversationHistory.push(...temp4.newItems.map((i) => i.rawItem));
-
-              finalOutput = { output_text: temp4.finalOutput ?? "" };
-            }
-
-          }
         } else {
-          // ENCERRAMENTO
-          const encTemp = await runner.run(agenteEncerramento, [...conversationHistory]);
-          conversationHistory.push(...encTemp.newItems.map((i) => i.rawItem));
+          const encerramento = await runner.run(agenteEncerramento, [...conversationHistory]);
+          conversationHistory.push(...encerramento.newItems.map((i) => i.rawItem));
+          finalOutput = { output_text: encerramento.finalOutput ?? ""};
 
-          finalOutput = { output_text: encTemp.finalOutput ?? "" };
         }
 
       } else {
         const foraTemp = await runner.run(agenteForaContexto, [...conversationHistory]);
         conversationHistory.push(...foraTemp.newItems.map((i) => i.rawItem));
-        finalOutput = { output_text: foraTemp.finalOutput ?? "" };
+        finalOutput = { output_text: foraTemp.finalOutput ?? ""};
       }
 
     }
-
+    
     return finalOutput;
+
   });
 };

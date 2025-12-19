@@ -1,10 +1,8 @@
 import OpenAI from "openai";
 import dotenv from 'dotenv';
-import { runWorkflow, WorkflowInput } from "../modules/bots/clinicobot";
+import { runWorkflow, WorkflowInput, WorkflowState } from "../modules/bots/clinicobot";
 
 dotenv.config();
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export interface OpenAIResponse {
   text: string;
@@ -28,15 +26,13 @@ export interface ConversationContext {
 
 export async function runChatKitWorkflow(
   workflowId: string,
-  userInput: string,
+  workflowInput: WorkflowInput,
 ): Promise<OpenAIResponse> {
    try {
-    const input: WorkflowInput = { input_as_text: userInput};
-    const responsesChatkit = await runWorkflow(input);
-    const workflowText = await responsesChatkit.output_text;
-
+    const responsesChatkit = await runWorkflow(workflowInput);
+    console.log("mensagem devolvida: ", responsesChatkit.output_text)
     return {
-      text: workflowText,
+      text: responsesChatkit.output_text,
       success: true
     };
 
@@ -51,10 +47,13 @@ export async function runChatKitWorkflow(
 }
 
 export async function sendMessageToOpenAI(
+  phone: string,
   message: string,
+  history: ConversationMessage[],
+  state: WorkflowState
 ): Promise<OpenAIResponse> {
-  const defaultWorkflowId = process.env.WORKFLOW_ID || "wf_68efd98836548190a10ffc48e39964e30d2140404e365122";
-  return await runChatKitWorkflow(defaultWorkflowId, message);
+  const defaultWorkflowId = `${process.env.WORKFLOW_ID}`;
+  return await runChatKitWorkflow(defaultWorkflowId, { input_as_text: message, phone, history, state });
 }
 
 /**

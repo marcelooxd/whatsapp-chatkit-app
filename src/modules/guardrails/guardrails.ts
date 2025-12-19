@@ -17,10 +17,10 @@ export const jailbreakGuardrailsConfig = {
       }
     }, 
     { name: "Jailbreak", 
-      config: {
-        model: "gpt-4.1-mini", 
-        confidence_threshold: 0.7 
-      } 
+        config: { 
+            model: "gpt-4.1-mini", 
+            confidence_threshold: 0.7 
+        } 
     }
   ]
 };

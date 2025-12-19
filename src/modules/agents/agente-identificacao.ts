@@ -119,7 +119,7 @@ export const agenteDeIdentificacao = new Agent({
   model: "gpt-4.1-mini",
   outputType: agenteDeIdentificacaoSchema,
   modelSettings: {
-    temperature: 1,
+    temperature: 0.1,
     topP: 1,
     maxTokens: 2048,
     store: true

@@ -7,12 +7,16 @@ const buscarPacienteMcp = hostedMcpTool({
   serverLabel: "buscar_paciente",
   allowedTools: [
     "data_hora_hoje",
-    "buscar_pacientes"
+    "buscar_pacientes", 
+    "get_convenio",
+    "listar_procedimentos",
+    "get_profissional_by_id",
+    "buscar_pacientes",
+    "listar_profissionais",
+    "get_convenios_filtrados"
   ],
   requireApproval: "never",
-  serverUrl: `${process.env.SERVER_MCP}`,
-  authorization: `Bearer ${process.env.MCP_SECRET_TOKEN}`,
-  headers: { "MCP-SERVICE-KEY": `${process.env.MCP_SHARED_SECRET}` }
+  serverUrl: `${process.env.SERVER_MCP}`
 })
 
 export const agenteBuscarPaciente = new Agent({
@@ -69,9 +73,9 @@ export const agenteBuscarPaciente = new Agent({
     buscarPacienteMcp
   ],
   modelSettings: {
-    temperature: 1,
+    temperature: 0.1,
     topP: 1,
-    maxTokens: 2048,
+    maxTokens: 1024,
     store: true
   }
 });

@@ -1,4 +1,7 @@
 import { Agent, hostedMcpTool } from "@openai/agents";
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const profissionaisMcp = hostedMcpTool({
   serverLabel: "profissional_server",
@@ -6,6 +9,8 @@ const profissionaisMcp = hostedMcpTool({
     "data_hora_hoje",
     "get_profissional_by_id",
     "listar_profissionais",
+    "todos_agendamentos_disponiveis",       
+    "agendamentos_disponiveis_profissional",
   ],
   requireApproval: "never",
   serverUrl: `${process.env.SERVER_MCP}`
@@ -27,7 +32,9 @@ export const agenteProfissionais = new Agent({
     Se o usuário fizer perguntas fora do escopo (ex: doenças, diagnósticos médicos, ou recomendações clínicas), responda com empatia, mas esclareça que você não fornece orientações médicas.
     “Posso te ajudar com informações sobre nossos procedimentos, valores e profissionais, mas não posso oferecer orientações médicas específicas.”
     Mantenha sempre um tom claro, educativo e acolhedor, evitando jargões técnicos.
-
+    
+    Caso o usuário queira saber, é possivel verificar os horários do paciente de acordo com a data de entrada fornecida ou os horários dos próximos 3 dias. Caso o médico atenda pelo agendamento online.
+    
     Caso não haja contexto, não insira parametros como \"cbo\",  \"procedimentoId\", \"convenioId\" ou \"profissionalId\", sempre busque por procedimentos ativos.
     Todas as requisições paginadas devem ser indexadas em 0.
     Ordene as requisições sempre em \"sort\": \"asc\", sempre em ordem asc.`,
@@ -36,7 +43,7 @@ export const agenteProfissionais = new Agent({
     profissionaisMcp
   ],
   modelSettings: {
-    temperature: 1,
+    temperature: 0.1,
     topP: 1,
     maxTokens: 1096,
     store: true
